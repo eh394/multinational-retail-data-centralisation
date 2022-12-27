@@ -1,2 +1,2 @@
-class DataExtractor():
+class DataExtractor:
     pass
