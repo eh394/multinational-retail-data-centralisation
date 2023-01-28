@@ -40,9 +40,9 @@ class DataClean:
         # Verify format of user uuid
         users.user_uuid = users.user_uuid.apply(lambda x: x if re.match('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', str(x)) else np.nan)
 
-        # Dropping redundant index column, nan values and resetting index
+        # Dropping redundant index column and resetting index
         users.drop('index', axis = 1, inplace=True)
-        users.dropna(inplace=True) # thresh = 11
+        users.dropna(inplace=True, subset=['user_uuid'])
         users.reset_index(drop=True, inplace=True)
 
         return users
@@ -53,17 +53,19 @@ class DataClean:
         cards = df.copy()
 
         # Check card providers are valid and corresponding number of digits in the card number is correct
-        providers = {'VISA 13 digit': [13], 'VISA 16 digit': [16], 'VISA 19 digit': [19], 'JCB 15 digit': [15], 'JCB 16 digit': [16], 'Discover': [16], 'Mastercard': [16], 'Maestro': range(12, 20), 'American Express': [15], 'Diners Club / Carte Blanche': [14]}
+        providers = {'VISA 13 digit': [13], 'VISA 16 digit': [16], 'VISA 19 digit': [19], 'JCB 15 digit': [15], 'JCB 16 digit': [16], 'Discover': [16], 'Mastercard': [16], 'Maestro': range(12, 21), 'American Express': [15], 'Diners Club / Carte Blanche': [14]}
         cards.card_provider = cards.card_provider.apply(lambda x: x if x in providers else np.nan)
-        cards.dropna(inplace=True) # without this line next line will result in key error
+        cards.dropna(inplace=True, subset = ['card_provider']) # without this line next line will result in key error
+        cards.card_number = cards.card_number.replace('[\D]', '', regex=True)        
         cards['card_check'] = cards.apply(lambda row: True if (len(str(row['card_number'])) in providers[row['card_provider']]) else np.nan, axis = 1)
+        cards.card_number = cards.card_number.apply(lambda x: str(x) if len(str(x)) in range(12,20) else np.nan)
 
         # Clean columns with expiry date and confirmed date of payment
         cards.date_payment_confirmed = cards.date_payment_confirmed.apply(lambda x: pd.to_datetime(x, format = '%Y-%m-%d' , errors = 'coerce')).dt.date
         cards.expiry_date = cards.expiry_date.apply(lambda x: pd.to_datetime(x, format = '%m/%y' , errors = 'coerce')).dt.date
 
         # Dropping nan values, duplicates, card check column that is no longer required and resetting index
-        cards.dropna(inplace=True) # thresh = 4
+        cards.dropna(inplace=True, subset=['card_number'])
         cards.drop_duplicates(inplace = True)
         cards.drop('card_check', axis = 1, inplace=True)
         cards.reset_index(drop=True, inplace=True)
@@ -97,16 +99,17 @@ class DataClean:
         stores.locality.replace('[\d]', np.nan, regex=True, inplace=True)
 
         # Check store_code against specific format
-        stores.store_code = stores.store_code.apply(lambda x: x if re.match('^[A-Z]{2}-[A-Z0-9]{8}$', str(x)) else np.nan)
+        stores.store_code = stores.store_code.apply(lambda x: x if re.match('^[A-Z]{2,3}-[A-Z0-9]{8}$', str(x)) else np.nan)
 
         # Clean up staff numbers, longitude and latitide columns
         stores[['staff_numbers', 'longitude', 'latitude']] = stores[['staff_numbers', 'longitude', 'latitude']].apply(lambda x: round(pd.to_numeric(x, errors = 'coerce'), 1))
-        stores.dropna(subset = ['staff_numbers', 'longitude', 'latitude'], inplace=True)
+        stores.dropna(subset = ['staff_numbers'], inplace=True)
         stores = stores.astype({'staff_numbers': 'int64'})
 
         # Dropping nan values, redundant index column, lat column which contains little valid data and resetting index
         stores.drop(['index', 'lat'], axis = 1, inplace=True)
-        stores.dropna(inplace = True) # 'lat' column is largely populated with np.nan so it is important it is deleted prior to dropna unless subset is used here
+        stores.dropna(inplace = True, subset = ['store_code', 'store_type'])
+        # 'lat' column is largely populated with np.nan so it is important it is deleted prior to dropna unless subset is used here, thresh parameter defines number of non-nan values to keep the column, could also use a subset here based on store type or store code
         stores.drop_duplicates(inplace = True)
         stores.reset_index(drop = True, inplace=True)
 
@@ -154,14 +157,15 @@ class DataClean:
         products.uuid = products.uuid.apply(lambda x: x if re.match('^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', str(x)) else np.nan)
 
         # Verify that EAN column entries follow a specific format
-        products.EAN = products.EAN.apply(lambda x: str(x) if re.match('^[0-9]{12,13}$', str(x)) else np.nan)
+        products.rename(columns = {'EAN': 'ean'}, inplace=True)
+        products.ean = products.ean.apply(lambda x: str(x) if re.match('^[0-9]{12,13}$', str(x)) else np.nan)
          
         # Verify that product_code column entries follow a specific format
         products.product_code = products.product_code.apply(lambda x: x if re.match('^[a-zA-Z0-9]{2}-[0-9]{6,7}[a-zA-Z]$', str(x)) else np.nan)
 
         # Delete unnecessary columns, nan entries and reset index (no duplicates confirmed)
         products.drop('Unnamed: 0', axis=1, inplace=True)
-        products.dropna(inplace = True)
+        products.dropna(inplace = True, subset=['product_code'])
         products.drop_duplicates(inplace=True)
         products.reset_index(drop=True, inplace=True)
             
@@ -176,8 +180,8 @@ class DataClean:
         orders = orders.drop(['first_name', 'last_name', '1', 'level_0', 'index'], axis=1)
 
         # Invalid entries containing alphabetical characters are removed from the card_number column; column entries are also checked against the expected correct number of digits
-        orders.card_number.replace('[a-zA-Z]', np.nan, regex=True, inplace=True)
-        orders.card_number = orders.card_number.apply(lambda x: x if len(str(x)) in range(12,20) else np.nan)
+        orders.card_number.replace('[\D]', '', regex=True, inplace=True) 
+        orders.card_number = orders.card_number.apply(lambda x: str(x) if len(str(x)) in range(12,20) else np.nan) # NOTE there seem to be a lot of cards with 11 no. digits (800+) which appear invalid
 
         # Convert product quantity column to numeric data type
         orders.product_quantity = orders.product_quantity.apply(lambda x: pd.to_numeric(x, errors = 'coerce')).astype('int64')
@@ -192,7 +196,7 @@ class DataClean:
         orders.product_code = orders.product_code.apply(lambda x: str(x) if re.match('^[a-zA-Z][0-9]-[0-9]{5,7}[a-zA-Z]$', str(x)) else np.nan)
 
         # Remove rows with nan entries and duplicates and reset index
-        orders.dropna(inplace=True)
+        # orders.dropna(inplace=True) # currently keep all rows to avoid over-cleaning
         orders.drop_duplicates(inplace=True)
         orders.reset_index(drop=True, inplace=True)
 
@@ -229,7 +233,7 @@ class DataClean:
         dates.time_period = dates.time_period.apply(lambda x: x if x in periods else np.nan)
 
         # Remove nan values, duplicates and reset index
-        dates.dropna(inplace = True)
+        dates.dropna(inplace = True, subset=['date_uuid']) # currently keep all rows to avoid over-cleaning
         dates.drop_duplicates(inplace=True)
         dates.reset_index(drop=True, inplace=True)
 
